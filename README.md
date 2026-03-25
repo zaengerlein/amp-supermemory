@@ -1,32 +1,23 @@
-# Supermemory for Amp
+# amp-supermemory
 
-Persistent memory across [Amp](https://ampcode.com) sessions using [Supermemory](https://supermemory.ai).
+Persistent memory plugin for [Amp](https://ampcode.com) using [Supermemory](https://supermemory.ai).
 
-Amp remembers your preferences, coding patterns, architectural decisions, debugging insights, and project conventions — across sessions and projects.
+Your agent remembers what you worked on — across sessions, across projects.
 
-## Features
+## Installation
 
-- **Automatic context injection** — relevant memories are loaded at the start of each session
-- **Save & search** — explicitly save important knowledge or search past memories
-- **User + project scoping** — personal memories follow you across projects; project memories are shared with your team
-- **Profile building** — Supermemory automatically builds a profile of your preferences and patterns
-- **Privacy controls** — wrap sensitive content in `<private>` tags to prevent it from being stored
-- **OAuth login** — authenticate via browser in seconds
-
-## Install
-
-1. Copy the plugin file to your Amp plugins directory:
+1. Copy the plugin to your Amp plugins directory:
 
 ```bash
 # Global (all projects)
 mkdir -p ~/.config/amp/plugins
 curl -o ~/.config/amp/plugins/supermemory.js \
-  https://raw.githubusercontent.com/supermemoryai/amp-supermemory/main/dist/supermemory.js
+  https://raw.githubusercontent.com/zaengerlein/amp-supermemory/main/dist/supermemory.js
 
 # Or project-level
 mkdir -p .amp/plugins
 curl -o .amp/plugins/supermemory.js \
-  https://raw.githubusercontent.com/supermemoryai/amp-supermemory/main/dist/supermemory.js
+  https://raw.githubusercontent.com/zaengerlein/amp-supermemory/main/dist/supermemory.js
 ```
 
 2. Run Amp with plugins enabled:
@@ -35,39 +26,57 @@ curl -o .amp/plugins/supermemory.js \
 PLUGINS=all amp
 ```
 
-3. Log in to Supermemory:
+3. Get your API key from [app.supermemory.ai](https://app.supermemory.ai/?view=integrations) and either:
 
-Press `Ctrl-O` and select **Supermemory: Login** — a browser window will open for authentication.
+```bash
+export SUPERMEMORY_API_KEY="sm_..."
+```
 
-Alternatively, set the `SUPERMEMORY_API_KEY` environment variable.
+Or use the built-in login — press `Ctrl-O` and select **Supermemory: Login** to authenticate via browser.
 
-## Usage
+## How It Works
 
-### Automatic Context
+Once installed, the plugin works automatically:
 
-On the first message of each session, Supermemory automatically fetches your profile, relevant memories, and project knowledge, then injects them into the conversation context. No action needed.
+**Auto-Recall** — On the first message of each session, Supermemory fetches your user profile, relevant memories, and project knowledge, then injects them into the conversation context. No action needed.
 
-### Supermemory Tool
+**Auto-Capture** — When a session ends, the conversation is sent to Supermemory for long-term storage.
 
-The agent has access to a `supermemory` tool with these modes:
+**Privacy** — Wrap sensitive content in `<private>` tags to prevent it from being stored:
+
+```
+My API key is <private>sk-abc123</private>
+```
+
+## Features
+
+- **Context injection** — relevant memories loaded at the start of each session
+- **Save & search** — explicitly save important knowledge or search past memories
+- **User + project scoping** — personal memories follow you; project memories are shared with your team
+- **Profile building** — Supermemory automatically builds a profile of your preferences and patterns
+- **OAuth login** — authenticate via browser in seconds
+
+## Tool
+
+The `supermemory` tool is available to the agent:
 
 | Mode | Description |
 |------|-------------|
-| `save` | Save knowledge to memory (user or project scope) |
-| `search` | Semantic search across your memories |
-| `profile` | View your auto-built preference profile |
+| `save` | Save knowledge to memory (`user` or `project` scope) |
+| `search` | Semantic search across memories |
+| `profile` | View auto-built preference profile |
 | `list` | List recent stored memories |
 | `forget` | Delete a specific memory by ID |
 
-The agent will proactively use this tool when you ask it to remember something, when it discovers important patterns, or when you tell it to save a decision.
+The agent uses this tool proactively when you ask it to remember something, when it discovers important patterns, or when you tell it to save a decision.
 
 **Examples:**
+
 - *"Remember that this project uses 4-space indentation"*
 - *"Save to project memory: we use Zustand for state management"*
 - *"Search my memories for how we handled auth last time"*
-- *"What does my profile say about my preferences?"*
 
-### Commands
+## Commands
 
 Press `Ctrl-O` to access:
 
@@ -77,19 +86,15 @@ Press `Ctrl-O` to access:
 | **Supermemory: Logout** | Remove credentials |
 | **Supermemory: Status** | Show connection status and config |
 
-### Privacy
-
-Wrap sensitive content in `<private>` tags to prevent it from being stored:
-
-```
-My API key is <private>sk-abc123</private>
-```
-
-This will be stored as: `My API key is [REDACTED]`
-
 ## Configuration
 
-Create `~/.supermemory-amp/config.json`:
+Set API key via environment variable:
+
+```bash
+export SUPERMEMORY_API_KEY="sm_..."
+```
+
+Or create `~/.supermemory-amp/config.json`:
 
 ```json
 {
@@ -105,29 +110,33 @@ Create `~/.supermemory-amp/config.json`:
 }
 ```
 
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `apiKey` | — | Supermemory API key (or use `SUPERMEMORY_API_KEY` env var) |
-| `similarityThreshold` | `0.6` | Minimum similarity score for memory retrieval |
+| Option | Default | Description |
+|--------|---------|-------------|
+| `apiKey` | — | Supermemory API key |
+| `similarityThreshold` | `0.6` | Min similarity for memory retrieval (0–1) |
 | `maxMemories` | `5` | Max user memories per context injection |
 | `maxProjectMemories` | `10` | Max project memories to include |
 | `maxProfileItems` | `5` | Max profile facts to inject |
-| `injectProfile` | `true` | Whether to include your profile in context |
+| `injectProfile` | `true` | Include profile in context |
 | `containerTagPrefix` | `"amp"` | Prefix for auto-generated container tags |
-| `userContainerTag` | — | Override the auto-generated user tag |
-| `projectContainerTag` | — | Override the auto-generated project tag |
+| `userContainerTag` | — | Override auto-generated user tag |
+| `projectContainerTag` | — | Override auto-generated project tag |
 
-**API key resolution order:** `SUPERMEMORY_API_KEY` env var → `config.json` → OAuth credentials
+All fields optional. Env var `SUPERMEMORY_API_KEY` takes precedence over config file.
 
 ## Memory Scoping
 
-- **User memories** — scoped to your git email hash, follow you across all projects
-- **Project memories** — scoped to the git remote name, shared with anyone who works on the same repo
+| Scope | Tag | Persists |
+|-------|-----|----------|
+| User | `amp_user_{sha256(git email)}` | All projects |
+| Project | `amp_project_{git remote name}` | This project |
 
-## Build from Source
+Custom container tags let you share memories across team members or sync between machines.
+
+## Development
 
 ```bash
-git clone https://github.com/supermemoryai/amp-supermemory.git
+git clone https://github.com/zaengerlein/amp-supermemory.git
 cd amp-supermemory
 npm install
 npm run build
