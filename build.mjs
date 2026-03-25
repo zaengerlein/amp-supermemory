@@ -3,10 +3,10 @@ import * as esbuild from 'esbuild';
 await esbuild.build({
     entryPoints: ['src/plugin.ts'],
     bundle: true,
-    outfile: 'dist/supermemory.js',
+    outfile: 'dist/supermemory.ts',
     format: 'esm',
     platform: 'node',
-    target: 'node22',
+    target: 'esnext',
     minify: false,
     keepNames: true,
     banner: {
@@ -18,4 +18,4 @@ await esbuild.build({
     },
 });
 
-console.log('Built dist/supermemory.js');
+console.log('Built dist/supermemory.ts');
