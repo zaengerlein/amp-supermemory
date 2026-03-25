@@ -13,13 +13,13 @@ Your agent remembers what you worked on — across sessions, across projects.
 ```bash
 # Global (all projects)
 mkdir -p ~/.config/amp/plugins
-curl -o ~/.config/amp/plugins/supermemory.js \
-  https://raw.githubusercontent.com/zaengerlein/amp-supermemory/main/dist/supermemory.js
+curl -o ~/.config/amp/plugins/supermemory.ts \
+  https://raw.githubusercontent.com/zaengerlein/amp-supermemory/main/dist/supermemory.ts
 
 # Or project-level
 mkdir -p .amp/plugins
-curl -o .amp/plugins/supermemory.js \
-  https://raw.githubusercontent.com/zaengerlein/amp-supermemory/main/dist/supermemory.js
+curl -o .amp/plugins/supermemory.ts \
+  https://raw.githubusercontent.com/zaengerlein/amp-supermemory/main/dist/supermemory.ts
 ```
 
 **Step 2:** Run Amp with plugins enabled:
@@ -140,7 +140,7 @@ git clone https://github.com/zaengerlein/amp-supermemory.git
 cd amp-supermemory
 npm install
 npm run build
-# Output: dist/supermemory.js
+# Output: dist/supermemory.ts
 ```
 
 ## License
