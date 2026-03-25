@@ -3,7 +3,8 @@ import { saveCredentials } from './config';
 
 const AUTH_PORT = 19878;
 const AUTH_TIMEOUT = 120_000; // 2 minutes
-const AUTH_URL = 'https://app.supermemory.ai/auth/connect';
+const AUTH_URL = process.env.SUPERMEMORY_AUTH_URL || 'https://app.supermemory.ai/auth/connect';
+const AUTH_CLIENT = 'claude_code';
 
 const SUCCESS_HTML = `<!DOCTYPE html>
 <html><head><title>Supermemory Connected</title>
@@ -35,7 +36,7 @@ export async function startAuthFlow(openUrl: (url: string | URL) => Promise<void
             const url = new URL(req.url || '/', `http://localhost:${AUTH_PORT}`);
 
             if (url.pathname === '/callback') {
-                const apiKey = url.searchParams.get('apikey') || url.searchParams.get('apiKey');
+                const apiKey = url.searchParams.get('apikey') || url.searchParams.get('apiKey') || url.searchParams.get('api_key');
 
                 if (apiKey && apiKey.startsWith('sm_')) {
                     saveCredentials(apiKey);
@@ -59,7 +60,7 @@ export async function startAuthFlow(openUrl: (url: string | URL) => Promise<void
 
         server.listen(AUTH_PORT, async () => {
             const callbackUrl = `http://localhost:${AUTH_PORT}/callback`;
-            const authUrl = `${AUTH_URL}?callback=${encodeURIComponent(callbackUrl)}&client=amp`;
+            const authUrl = `${AUTH_URL}?callback=${encodeURIComponent(callbackUrl)}&client=${AUTH_CLIENT}`;
 
             try {
                 await openUrl(authUrl);

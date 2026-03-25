@@ -1843,7 +1843,8 @@ __name(getApiKey, "getApiKey");
 import { createServer } from "node:http";
 var AUTH_PORT = 19878;
 var AUTH_TIMEOUT = 12e4;
-var AUTH_URL = "https://app.supermemory.ai/auth/connect";
+var AUTH_URL = process.env.SUPERMEMORY_AUTH_URL || "https://app.supermemory.ai/auth/connect";
+var AUTH_CLIENT = "claude_code";
 var SUCCESS_HTML = `<!DOCTYPE html>
 <html><head><title>Supermemory Connected</title>
 <style>body{font-family:system-ui;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;background:#0a0a0a;color:#fff}
@@ -1863,7 +1864,7 @@ async function startAuthFlow(openUrl) {
       if (resolved) return;
       const url = new URL(req.url || "/", `http://localhost:${AUTH_PORT}`);
       if (url.pathname === "/callback") {
-        const apiKey = url.searchParams.get("apikey") || url.searchParams.get("apiKey");
+        const apiKey = url.searchParams.get("apikey") || url.searchParams.get("apiKey") || url.searchParams.get("api_key");
         if (apiKey && apiKey.startsWith("sm_")) {
           saveCredentials(apiKey);
           res.writeHead(200, { "Content-Type": "text/html" });
@@ -1885,7 +1886,7 @@ async function startAuthFlow(openUrl) {
     });
     server.listen(AUTH_PORT, async () => {
       const callbackUrl = `http://localhost:${AUTH_PORT}/callback`;
-      const authUrl = `${AUTH_URL}?callback=${encodeURIComponent(callbackUrl)}&client=amp`;
+      const authUrl = `${AUTH_URL}?callback=${encodeURIComponent(callbackUrl)}&client=${AUTH_CLIENT}`;
       try {
         await openUrl(authUrl);
       } catch {
