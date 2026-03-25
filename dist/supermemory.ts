@@ -2012,8 +2012,40 @@ function generateTags(cwd, config) {
 __name(generateTags, "generateTags");
 
 // src/services/privacy.ts
+var SECRET_PATTERNS = [
+  // API keys & tokens (common prefixes)
+  [/\b(sk-[a-zA-Z0-9]{20,})\b/g, "[REDACTED_API_KEY]"],
+  [/\b(sm_[a-zA-Z0-9]{10,})\b/g, "[REDACTED_SM_KEY]"],
+  [/\b(ghp_[a-zA-Z0-9]{36,})\b/g, "[REDACTED_GITHUB_TOKEN]"],
+  [/\b(gho_[a-zA-Z0-9]{36,})\b/g, "[REDACTED_GITHUB_TOKEN]"],
+  [/\b(ghu_[a-zA-Z0-9]{36,})\b/g, "[REDACTED_GITHUB_TOKEN]"],
+  [/\b(github_pat_[a-zA-Z0-9_]{20,})\b/g, "[REDACTED_GITHUB_TOKEN]"],
+  [/\b(xoxb-[a-zA-Z0-9-]{20,})\b/g, "[REDACTED_SLACK_TOKEN]"],
+  [/\b(xoxp-[a-zA-Z0-9-]{20,})\b/g, "[REDACTED_SLACK_TOKEN]"],
+  [/\b(xapp-[a-zA-Z0-9-]{20,})\b/g, "[REDACTED_SLACK_TOKEN]"],
+  [/\b(sk-ant-[a-zA-Z0-9-]{20,})\b/g, "[REDACTED_ANTHROPIC_KEY]"],
+  [/\b(AIza[a-zA-Z0-9_-]{30,})\b/g, "[REDACTED_GOOGLE_KEY]"],
+  [/\b(AKIA[A-Z0-9]{16})\b/g, "[REDACTED_AWS_KEY]"],
+  [/\b(np_[a-zA-Z0-9]{20,})\b/g, "[REDACTED_NPM_TOKEN]"],
+  [/\b(pypi-[a-zA-Z0-9]{20,})\b/g, "[REDACTED_PYPI_TOKEN]"],
+  [/\b(glpat-[a-zA-Z0-9_-]{20,})\b/g, "[REDACTED_GITLAB_TOKEN]"],
+  // Bearer tokens in headers
+  [/(Authorization:\s*Bearer\s+)[^\s"']+/gi, "$1[REDACTED_TOKEN]"],
+  // Passwords in connection strings / env vars
+  [/((?:password|passwd|pwd|secret|token|api_key|apikey|api-key|access_key|private_key)\s*[:=]\s*['"]?)[^\s'"}\]]+/gi, "$1[REDACTED]"],
+  // Connection strings with embedded credentials
+  [/((?:mongodb|postgres|mysql|redis|amqp|smtp):\/\/[^:]+:)[^@]+(@)/gi, "$1[REDACTED]$2"],
+  // Private keys
+  [/-----BEGIN (?:RSA |EC |DSA )?PRIVATE KEY-----[\s\S]*?-----END (?:RSA |EC |DSA )?PRIVATE KEY-----/g, "[REDACTED_PRIVATE_KEY]"],
+  // JWTs (3 base64 segments separated by dots, each segment 10+ chars)
+  [/\beyJ[a-zA-Z0-9_-]{10,}\.eyJ[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}\b/g, "[REDACTED_JWT]"]
+];
 function stripPrivateContent(content) {
-  return content.replace(/<private>[\s\S]*?<\/private>/gi, "[REDACTED]");
+  let result = content.replace(/<private>[\s\S]*?<\/private>/gi, "[REDACTED]");
+  for (const [pattern, replacement] of SECRET_PATTERNS) {
+    result = result.replace(pattern, replacement);
+  }
+  return result;
 }
 __name(stripPrivateContent, "stripPrivateContent");
 
@@ -2124,6 +2156,30 @@ function relativeTime(dateStr) {
 }
 __name(relativeTime, "relativeTime");
 
+// src/services/logger.ts
+import { appendFileSync, mkdirSync as mkdirSync2, existsSync as existsSync2 } from "node:fs";
+import { join as join2 } from "node:path";
+import { homedir as homedir2 } from "node:os";
+var LOG_DIR = join2(homedir2(), ".supermemory-amp");
+var LOG_FILE = join2(LOG_DIR, "debug.log");
+function ensureLogDir() {
+  if (!existsSync2(LOG_DIR)) {
+    mkdirSync2(LOG_DIR, { recursive: true, mode: 448 });
+  }
+}
+__name(ensureLogDir, "ensureLogDir");
+function log(tag, ...args) {
+  try {
+    ensureLogDir();
+    const timestamp = (/* @__PURE__ */ new Date()).toISOString();
+    const message = args.map((a) => typeof a === "string" ? a : JSON.stringify(a, null, 2)).join(" ");
+    appendFileSync(LOG_FILE, `[${timestamp}] ${tag} ${message}
+`);
+  } catch {
+  }
+}
+__name(log, "log");
+
 // src/plugin.ts
 function supermemoryPlugin(amp) {
   const config = loadConfig();
@@ -2139,10 +2195,14 @@ function supermemoryPlugin(amp) {
   }
   __name(ensureClient, "ensureClient");
   amp.on("agent.start", async (event, ctx) => {
-    const sessionKey = `${event.id}`;
-    if (event.id !== 1) return {};
+    log("[agent.start]", "event.id:", event.id, "message:", event.message?.slice(0, 100));
+    if (event.id !== 0) {
+      log("[agent.start]", "Skipping non-first message");
+      return;
+    }
     const c = ensureClient();
     if (!c) {
+      log("[agent.start]", "No client \u2014 not connected");
       return {
         message: {
           content: '<supermemory-context>\nSupermemory is not connected. Use the "supermemory: login" command (Ctrl-O) to authenticate.\n</supermemory-context>',
@@ -2157,36 +2217,78 @@ function supermemoryPlugin(amp) {
     } catch {
     }
     tags = tags || generateTags(cwd, config);
+    log("[agent.start]", "tags:", tags, "cwd:", cwd);
     try {
       const [profile, userMemories, projectMemories] = await Promise.all([
-        config.injectProfile ? c.getProfile(tags.user, event.message).catch(() => null) : Promise.resolve(null),
-        c.searchMemories(event.message, tags.user, config.maxMemories).catch(() => []),
-        c.listMemories(tags.project, config.maxProjectMemories).catch(() => [])
+        config.injectProfile ? c.getProfile(tags.user, event.message).catch((err) => {
+          log("[agent.start]", "getProfile error:", err);
+          return null;
+        }) : Promise.resolve(null),
+        c.searchMemories(event.message, tags.user, config.maxMemories).catch((err) => {
+          log("[agent.start]", "searchMemories(user) error:", err);
+          return [];
+        }),
+        c.searchMemories(event.message, tags.project, config.maxProjectMemories).catch((err) => {
+          log("[agent.start]", "searchMemories(project) error:", err);
+          return [];
+        })
       ]);
+      log("[agent.start]", "Results:", {
+        profileStatic: profile?.staticFacts?.length ?? 0,
+        profileDynamic: profile?.dynamicFacts?.length ?? 0,
+        userMemories: userMemories.length,
+        projectMemories: projectMemories.length
+      });
       const contextStr = formatContext(profile, userMemories, projectMemories, config);
-      if (!contextStr) return {};
+      if (!contextStr) {
+        log("[agent.start]", "formatContext returned empty \u2014 nothing to inject");
+        return;
+      }
+      log("[agent.start]", "Injecting context, length:", contextStr.length);
+      log("[agent.start]", "Context:\n" + contextStr);
       return { message: { content: contextStr, display: true } };
     } catch (err) {
-      amp.logger.log("Failed to fetch Supermemory context:", err);
-      return {};
+      log("[agent.start]", "Uncaught error:", err);
+      return;
     }
   });
   amp.on("agent.end", async (event, ctx) => {
+    log("[agent.end]", "status:", event.status, "messageCount:", event.messages?.length ?? 0);
     const c = ensureClient();
-    if (!c || !tags) return {};
-    if (event.message && event.message.length > 20) {
-      try {
-        const sessionId = `amp_session_${Date.now()}`;
-        await c.addContent(
-          `[User request] ${event.message}`,
-          tags.user,
-          { type: "session", source: "amp" }
-        );
-      } catch (err) {
-        amp.logger.log("Failed to save session memory:", err);
-      }
+    if (!c || event.status !== "done") {
+      log("[agent.end]", "Skipping \u2014 client:", !!c, "status:", event.status);
+      return;
     }
-    return {};
+    if (!tags) {
+      let cwd = process.cwd();
+      try {
+        const result = await ctx.$`pwd`;
+        if (result.stdout.trim()) cwd = result.stdout.trim();
+      } catch {
+      }
+      tags = generateTags(cwd, config);
+      log("[agent.end]", "Initialized tags:", tags);
+    }
+    const conversation = (event.messages || []).filter((m) => m.role === "user" || m.role === "assistant").map((m) => {
+      const text = m.content.filter((b) => b.type === "text").map((b) => b.text).join("\n");
+      return `${m.role}: ${text}`;
+    }).filter((line) => line.length > 10).join("\n");
+    if (conversation.length < 50) {
+      log("[agent.end]", "Conversation too short, skipping:", conversation.length, "chars");
+      return;
+    }
+    const sanitized = stripPrivateContent(conversation);
+    try {
+      log("[agent.end]", "Saving to project scope:", {
+        containerTag: tags.project,
+        length: sanitized.length,
+        preview: sanitized.slice(0, 300)
+      });
+      await c.addContent(sanitized, tags.project, { type: "session", source: "amp" });
+      log("[agent.end]", "Session saved successfully");
+    } catch (err) {
+      log("[agent.end]", "Failed to save:", err);
+    }
   });
   amp.registerTool({
     name: "supermemory",

@@ -12,6 +12,7 @@ import {
     formatListResults,
 } from './services/context';
 import type { ContainerTags, SupermemoryConfig } from './types';
+import { log } from './services/logger';
 
 export default function supermemoryPlugin(amp: PluginAPI) {
     const config = loadConfig();
@@ -31,18 +32,22 @@ export default function supermemoryPlugin(amp: PluginAPI) {
     // Context injection on first message of each session
     // -------------------------------------------------------------------
     amp.on('agent.start', async (event, ctx) => {
-        const sessionKey = `${event.id}`;
+        log('[agent.start]', 'event.id:', event.id, 'message:', event.message?.slice(0, 100));
 
-        // Only inject on the first user message (id === 1)
-        if (event.id !== 1) return {};
+        // Only inject on the first user message (id === 0)
+        if (event.id !== 0) {
+            log('[agent.start]', 'Skipping non-first message');
+            return;
+        }
 
         const c = ensureClient();
         if (!c) {
+            log('[agent.start]', 'No client — not connected');
             return {
                 message: {
                     content:
                         '<supermemory-context>\nSupermemory is not connected. Use the "supermemory: login" command (Ctrl-O) to authenticate.\n</supermemory-context>',
-                    display: true,
+                    display: true as const,
                 },
             };
         }
@@ -57,24 +62,47 @@ export default function supermemoryPlugin(amp: PluginAPI) {
         }
 
         tags = tags || generateTags(cwd, config);
+        log('[agent.start]', 'tags:', tags, 'cwd:', cwd);
 
         try {
             // Fetch profile and memories in parallel
             const [profile, userMemories, projectMemories] = await Promise.all([
                 config.injectProfile
-                    ? c.getProfile(tags.user, event.message).catch(() => null)
+                    ? c.getProfile(tags.user, event.message).catch((err: unknown) => {
+                          log('[agent.start]', 'getProfile error:', err);
+                          return null;
+                      })
                     : Promise.resolve(null),
-                c.searchMemories(event.message, tags.user, config.maxMemories).catch(() => []),
-                c.listMemories(tags.project, config.maxProjectMemories).catch(() => []),
+                c.searchMemories(event.message, tags.user, config.maxMemories).catch((err: unknown) => {
+                    log('[agent.start]', 'searchMemories(user) error:', err);
+                    return [];
+                }),
+                c.searchMemories(event.message, tags.project, config.maxProjectMemories).catch((err: unknown) => {
+                    log('[agent.start]', 'searchMemories(project) error:', err);
+                    return [];
+                }),
             ]);
 
-            const contextStr = formatContext(profile, userMemories, projectMemories, config);
-            if (!contextStr) return {};
+            log('[agent.start]', 'Results:', {
+                profileStatic: profile?.staticFacts?.length ?? 0,
+                profileDynamic: profile?.dynamicFacts?.length ?? 0,
+                userMemories: userMemories.length,
+                projectMemories: projectMemories.length,
+            });
 
-            return { message: { content: contextStr, display: true } };
+            const contextStr = formatContext(profile, userMemories, projectMemories, config);
+            if (!contextStr) {
+                log('[agent.start]', 'formatContext returned empty — nothing to inject');
+                return;
+            }
+
+            log('[agent.start]', 'Injecting context, length:', contextStr.length);
+            log('[agent.start]', 'Context:\n' + contextStr);
+
+            return { message: { content: contextStr, display: true as const } };
         } catch (err) {
-            amp.logger.log('Failed to fetch Supermemory context:', err);
-            return {};
+            log('[agent.start]', 'Uncaught error:', err);
+            return;
         }
     });
 
@@ -82,25 +110,55 @@ export default function supermemoryPlugin(amp: PluginAPI) {
     // Save session summary on agent end (first turn only to avoid spam)
     // -------------------------------------------------------------------
     amp.on('agent.end', async (event, ctx) => {
-        // Save the user's message as context for future sessions
-        const c = ensureClient();
-        if (!c || !tags) return {};
+        log('[agent.end]', 'status:', event.status, 'messageCount:', event.messages?.length ?? 0);
 
-        // Only save substantive messages (skip very short ones)
-        if (event.message && event.message.length > 20) {
-            try {
-                const sessionId = `amp_session_${Date.now()}`;
-                await c.addContent(
-                    `[User request] ${event.message}`,
-                    tags.user,
-                    { type: 'session', source: 'amp' },
-                );
-            } catch (err) {
-                amp.logger.log('Failed to save session memory:', err);
-            }
+        const c = ensureClient();
+        if (!c || event.status !== 'done') {
+            log('[agent.end]', 'Skipping — client:', !!c, 'status:', event.status);
+            return;
         }
 
-        return {};
+        if (!tags) {
+            let cwd = process.cwd();
+            try {
+                const result = await ctx.$`pwd`;
+                if (result.stdout.trim()) cwd = result.stdout.trim();
+            } catch {}
+            tags = generateTags(cwd, config);
+            log('[agent.end]', 'Initialized tags:', tags);
+        }
+
+        // Build conversation summary from messages
+        const conversation = (event.messages || [])
+            .filter((m) => m.role === 'user' || m.role === 'assistant')
+            .map((m) => {
+                const text = m.content
+                    .filter((b): b is { type: 'text'; text: string } => b.type === 'text')
+                    .map((b) => b.text)
+                    .join('\n');
+                return `${m.role}: ${text}`;
+            })
+            .filter((line) => line.length > 10)
+            .join('\n');
+
+        if (conversation.length < 50) {
+            log('[agent.end]', 'Conversation too short, skipping:', conversation.length, 'chars');
+            return;
+        }
+
+        const sanitized = stripPrivateContent(conversation);
+
+        try {
+            log('[agent.end]', 'Saving to project scope:', {
+                containerTag: tags.project,
+                length: sanitized.length,
+                preview: sanitized.slice(0, 300),
+            });
+            await c.addContent(sanitized, tags.project, { type: 'session', source: 'amp' });
+            log('[agent.end]', 'Session saved successfully');
+        } catch (err) {
+            log('[agent.end]', 'Failed to save:', err);
+        }
     });
 
     // -------------------------------------------------------------------
