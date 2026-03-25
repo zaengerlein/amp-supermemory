@@ -2,13 +2,16 @@ import Supermemory from 'supermemory';
 import type { MemoryResult, ProfileResult } from '../types';
 
 const TIMEOUT = 30_000;
+const API_BASE = 'https://api.supermemory.ai';
 const ENTITY_CONTEXT =
     'Extract and remember: user preferences, coding patterns, architectural decisions, debugging insights, project conventions, technical context, and workflow habits.';
 
 export class SupermemoryClient {
     private client: Supermemory;
+    private apiKey: string;
 
     constructor(apiKey: string) {
+        this.apiKey = apiKey;
         this.client = new Supermemory({ apiKey });
     }
 
@@ -17,10 +20,36 @@ export class SupermemoryClient {
         containerTag: string,
         metadata?: Record<string, unknown>,
     ): Promise<void> {
+        const res = await Promise.race([
+            fetch(`${API_BASE}/v4/memories`, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${this.apiKey}`,
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    memories: [{ content, metadata }],
+                    containerTag,
+                }),
+            }),
+            timeout(TIMEOUT),
+        ]);
+
+        if (!res.ok) {
+            const body = await res.text();
+            throw new Error(`${res.status} ${body}`);
+        }
+    }
+
+    async addContent(
+        content: string,
+        containerTag: string,
+        metadata?: Record<string, unknown>,
+    ): Promise<void> {
         await Promise.race([
             this.client.add({
                 content,
-                containerTags: [containerTag],
+                containerTag,
                 metadata,
                 entityContext: ENTITY_CONTEXT,
             }),
@@ -36,8 +65,9 @@ export class SupermemoryClient {
         const result = (await Promise.race([
             this.client.search.memories({
                 q: query,
-                containerTags: [containerTag],
+                containerTag,
                 limit,
+                searchMode: 'hybrid',
             }),
             timeout(TIMEOUT),
         ])) as any;
@@ -46,9 +76,9 @@ export class SupermemoryClient {
 
         return result.results.map((r: any) => ({
             id: r.id,
-            content: r.content || r.text || '',
-            score: r.score,
-            createdAt: r.createdAt,
+            content: r.memory || r.chunk || r.content || r.text || '',
+            score: r.similarity,
+            createdAt: r.updatedAt || r.createdAt,
             metadata: r.metadata,
         }));
     }
@@ -56,46 +86,46 @@ export class SupermemoryClient {
     async getProfile(containerTag: string, query?: string): Promise<ProfileResult> {
         const result = (await Promise.race([
             this.client.profile({
-                containerTags: [containerTag],
+                containerTag,
                 q: query,
             }),
             timeout(TIMEOUT),
         ])) as any;
 
+        const profile = result?.profile;
         return {
-            staticFacts: result?.staticFacts || result?.facts || [],
-            dynamicFacts: result?.dynamicFacts || result?.recentContext || [],
+            staticFacts: profile?.static || [],
+            dynamicFacts: profile?.dynamic || [],
         };
     }
 
     async listMemories(containerTag: string, limit = 10): Promise<MemoryResult[]> {
         const result = (await Promise.race([
-            this.client.search.memories({
-                q: '*',
+            this.client.documents.list({
                 containerTags: [containerTag],
                 limit,
+                order: 'desc',
+                sort: 'createdAt',
+                includeContent: true,
             }),
             timeout(TIMEOUT),
         ])) as any;
 
-        if (!result?.results) return [];
+        if (!result?.memories) return [];
 
-        return result.results
-            .map((r: any) => ({
-                id: r.id,
-                content: r.content || r.text || '',
-                score: r.score,
-                createdAt: r.createdAt,
-                metadata: r.metadata,
-            }))
-            .sort((a: MemoryResult, b: MemoryResult) => {
-                if (!a.createdAt || !b.createdAt) return 0;
-                return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
-            });
+        return result.memories.map((doc: any) => ({
+            id: doc.id,
+            content: doc.summary || doc.content || doc.title || '',
+            createdAt: doc.createdAt,
+            metadata: typeof doc.metadata === 'object' && doc.metadata !== null ? doc.metadata as Record<string, unknown> : undefined,
+        }));
     }
 
-    async deleteMemory(memoryId: string): Promise<void> {
-        await Promise.race([(this.client as any).delete({ id: memoryId }), timeout(TIMEOUT)]);
+    async deleteMemory(memoryId: string, containerTag: string): Promise<void> {
+        await Promise.race([
+            this.client.memories.forget({ id: memoryId, containerTag }),
+            timeout(TIMEOUT),
+        ]);
     }
 }
 

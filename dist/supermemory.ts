@@ -1677,20 +1677,43 @@ Supermemory.Connections = Connections;
 
 // src/services/client.ts
 var TIMEOUT = 3e4;
+var API_BASE = "https://api.supermemory.ai";
 var ENTITY_CONTEXT = "Extract and remember: user preferences, coding patterns, architectural decisions, debugging insights, project conventions, technical context, and workflow habits.";
 var SupermemoryClient = class {
   static {
     __name(this, "SupermemoryClient");
   }
   client;
+  apiKey;
   constructor(apiKey) {
+    this.apiKey = apiKey;
     this.client = new Supermemory({ apiKey });
   }
   async addMemory(content, containerTag, metadata) {
+    const res = await Promise.race([
+      fetch(`${API_BASE}/v4/memories`, {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${this.apiKey}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          memories: [{ content, metadata }],
+          containerTag
+        })
+      }),
+      timeout(TIMEOUT)
+    ]);
+    if (!res.ok) {
+      const body = await res.text();
+      throw new Error(`${res.status} ${body}`);
+    }
+  }
+  async addContent(content, containerTag, metadata) {
     await Promise.race([
       this.client.add({
         content,
-        containerTags: [containerTag],
+        containerTag,
         metadata,
         entityContext: ENTITY_CONTEXT
       }),
@@ -1701,56 +1724,59 @@ var SupermemoryClient = class {
     const result = await Promise.race([
       this.client.search.memories({
         q: query,
-        containerTags: [containerTag],
-        limit
+        containerTag,
+        limit,
+        searchMode: "hybrid"
       }),
       timeout(TIMEOUT)
     ]);
     if (!result?.results) return [];
     return result.results.map((r) => ({
       id: r.id,
-      content: r.content || r.text || "",
-      score: r.score,
-      createdAt: r.createdAt,
+      content: r.memory || r.chunk || r.content || r.text || "",
+      score: r.similarity,
+      createdAt: r.updatedAt || r.createdAt,
       metadata: r.metadata
     }));
   }
   async getProfile(containerTag, query) {
     const result = await Promise.race([
       this.client.profile({
-        containerTags: [containerTag],
+        containerTag,
         q: query
       }),
       timeout(TIMEOUT)
     ]);
+    const profile = result?.profile;
     return {
-      staticFacts: result?.staticFacts || result?.facts || [],
-      dynamicFacts: result?.dynamicFacts || result?.recentContext || []
+      staticFacts: profile?.static || [],
+      dynamicFacts: profile?.dynamic || []
     };
   }
   async listMemories(containerTag, limit = 10) {
     const result = await Promise.race([
-      this.client.search.memories({
-        q: "*",
+      this.client.documents.list({
         containerTags: [containerTag],
-        limit
+        limit,
+        order: "desc",
+        sort: "createdAt",
+        includeContent: true
       }),
       timeout(TIMEOUT)
     ]);
-    if (!result?.results) return [];
-    return result.results.map((r) => ({
-      id: r.id,
-      content: r.content || r.text || "",
-      score: r.score,
-      createdAt: r.createdAt,
-      metadata: r.metadata
-    })).sort((a, b) => {
-      if (!a.createdAt || !b.createdAt) return 0;
-      return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
-    });
+    if (!result?.memories) return [];
+    return result.memories.map((doc) => ({
+      id: doc.id,
+      content: doc.summary || doc.content || doc.title || "",
+      createdAt: doc.createdAt,
+      metadata: typeof doc.metadata === "object" && doc.metadata !== null ? doc.metadata : void 0
+    }));
   }
-  async deleteMemory(memoryId) {
-    await Promise.race([this.client.delete({ id: memoryId }), timeout(TIMEOUT)]);
+  async deleteMemory(memoryId, containerTag) {
+    await Promise.race([
+      this.client.memories.forget({ id: memoryId, containerTag }),
+      timeout(TIMEOUT)
+    ]);
   }
 };
 function timeout(ms) {
@@ -2065,9 +2091,10 @@ function formatProfileResults(profile) {
   return sections.join("\n\n");
 }
 __name(formatProfileResults, "formatProfileResults");
-function formatListResults(memories) {
+function formatListResults(memories, scope) {
+  const label = scope ? `${scope} memories` : "memories";
   if (memories.length === 0) {
-    return "No memories stored yet.";
+    return `No ${label} stored yet.`;
   }
   const lines = memories.map((m, i) => {
     const age = m.createdAt ? ` \u2014 ${relativeTime(m.createdAt)}` : "";
@@ -2076,7 +2103,7 @@ function formatListResults(memories) {
   ID: ${m.id}` : "";
     return `${i + 1}.${type} ${m.content.slice(0, 400)}${age}${id}`;
   });
-  return `Stored memories (${memories.length}):
+  return `Stored ${label} (${memories.length}):
 
 ${lines.join("\n\n")}`;
 }
@@ -2150,7 +2177,7 @@ function supermemoryPlugin(amp) {
     if (event.message && event.message.length > 20) {
       try {
         const sessionId = `amp_session_${Date.now()}`;
-        await c.addMemory(
+        await c.addContent(
           `[User request] ${event.message}`,
           tags.user,
           { type: "session", source: "amp" }
@@ -2240,14 +2267,21 @@ Use this tool proactively when:
           return formatProfileResults(profile);
         }
         case "list": {
-          const tag = scope === "project" ? tags.project : tags.user;
-          const limit = scope === "project" ? config.maxProjectMemories : config.maxMemories;
-          const memories = await c.listMemories(tag, limit);
-          return formatListResults(memories);
+          const results = [];
+          if (scope === "user" || scope === "both") {
+            const memories = await c.listMemories(tags.user, config.maxMemories);
+            results.push(formatListResults(memories, "user"));
+          }
+          if (scope === "project" || scope === "both") {
+            const memories = await c.listMemories(tags.project, config.maxProjectMemories);
+            results.push(formatListResults(memories, "project"));
+          }
+          return results.join("\n\n---\n\n");
         }
         case "forget": {
           if (!memoryId) return "Error: memoryId is required for forget mode.";
-          await c.deleteMemory(memoryId);
+          const forgetTag = scope === "project" ? tags.project : tags.user;
+          await c.deleteMemory(memoryId, forgetTag);
           return `Memory ${memoryId} deleted.`;
         }
         default:

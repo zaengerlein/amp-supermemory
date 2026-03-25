@@ -90,7 +90,7 @@ export default function supermemoryPlugin(amp: PluginAPI) {
         if (event.message && event.message.length > 20) {
             try {
                 const sessionId = `amp_session_${Date.now()}`;
-                await c.addMemory(
+                await c.addContent(
                     `[User request] ${event.message}`,
                     tags.user,
                     { type: 'session', source: 'amp' },
@@ -194,15 +194,24 @@ Use this tool proactively when:
                 }
 
                 case 'list': {
-                    const tag = scope === 'project' ? tags.project : tags.user;
-                    const limit = scope === 'project' ? config.maxProjectMemories : config.maxMemories;
-                    const memories = await c.listMemories(tag, limit);
-                    return formatListResults(memories);
+                    const results: string[] = [];
+
+                    if (scope === 'user' || scope === 'both') {
+                        const memories = await c.listMemories(tags.user, config.maxMemories);
+                        results.push(formatListResults(memories, 'user'));
+                    }
+                    if (scope === 'project' || scope === 'both') {
+                        const memories = await c.listMemories(tags.project, config.maxProjectMemories);
+                        results.push(formatListResults(memories, 'project'));
+                    }
+
+                    return results.join('\n\n---\n\n');
                 }
 
                 case 'forget': {
                     if (!memoryId) return 'Error: memoryId is required for forget mode.';
-                    await c.deleteMemory(memoryId);
+                    const forgetTag = scope === 'project' ? tags.project : tags.user;
+                    await c.deleteMemory(memoryId, forgetTag);
                     return `Memory ${memoryId} deleted.`;
                 }
 
