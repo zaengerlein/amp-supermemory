@@ -1,0 +1,21 @@
+{
+  "name": "amp-supermemory",
+  "version": "0.1.0",
+  "description": "Persistent memory across Amp sessions using Supermemory",
+  "author": {
+    "name": "Supermemory",
+    "email": "support@supermemory.ai"
+  },
+  "type": "module",
+  "license": "MIT",
+  "scripts": {
+    "build": "node build.mjs"
+  },
+  "dependencies": {
+    "supermemory": "^4.0.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0",
+    "typescript": "^5.7.0"
+  }
+}
