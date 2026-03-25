@@ -18,7 +18,7 @@ export default function supermemoryPlugin(amp: PluginAPI) {
     const config = loadConfig();
     let client: SupermemoryClient | null = null;
     let tags: ContainerTags | null = null;
-    const injectedSessions = new Set<string>();
+    const lastSavedMessageCount = new Map<string, number>();
 
     function ensureClient(): SupermemoryClient | null {
         if (client) return client;
@@ -110,7 +110,9 @@ export default function supermemoryPlugin(amp: PluginAPI) {
     // Save session summary on agent end (first turn only to avoid spam)
     // -------------------------------------------------------------------
     amp.on('agent.end', async (event, ctx) => {
-        log('[agent.end]', 'status:', event.status, 'messageCount:', event.messages?.length ?? 0);
+        const allMessages = event.messages || [];
+        const totalCount = allMessages.length;
+        log('[agent.end]', 'status:', event.status, 'messageCount:', totalCount, 'eventId:', event.id);
 
         const c = ensureClient();
         if (!c || event.status !== 'done') {
@@ -128,8 +130,20 @@ export default function supermemoryPlugin(amp: PluginAPI) {
             log('[agent.end]', 'Initialized tags:', tags);
         }
 
-        // Build conversation summary from messages
-        const conversation = (event.messages || [])
+        // Only process messages since the last save (delta tracking)
+        const sessionKey = tags.project;
+        const lastSaved = lastSavedMessageCount.get(sessionKey) ?? 0;
+
+        if (lastSaved >= totalCount) {
+            log('[agent.end]', 'No new messages since last save, skipping. lastSaved:', lastSaved, 'total:', totalCount);
+            return;
+        }
+
+        const newMessages = allMessages.slice(lastSaved);
+        log('[agent.end]', 'Processing delta:', { lastSaved, total: totalCount, newCount: newMessages.length });
+
+        // Build conversation text from only the new messages
+        const conversation = newMessages
             .filter((m) => m.role === 'user' || m.role === 'assistant')
             .map((m) => {
                 const text = m.content
@@ -141,21 +155,28 @@ export default function supermemoryPlugin(amp: PluginAPI) {
             .filter((line) => line.length > 10)
             .join('\n');
 
-        if (conversation.length < 50) {
+        if (conversation.length < 100) {
             log('[agent.end]', 'Conversation too short, skipping:', conversation.length, 'chars');
             return;
         }
 
         const sanitized = stripPrivateContent(conversation);
 
+        if (sanitized.trim().length < 100) {
+            log('[agent.end]', 'Sanitized content too short after stripping, skipping:', sanitized.trim().length, 'chars');
+            return;
+        }
+
         try {
             log('[agent.end]', 'Saving to project scope:', {
                 containerTag: tags.project,
                 length: sanitized.length,
+                delta: `messages ${lastSaved}-${totalCount}`,
                 preview: sanitized.slice(0, 300),
             });
             await c.addContent(sanitized, tags.project, { type: 'session', source: 'amp' });
-            log('[agent.end]', 'Session saved successfully');
+            lastSavedMessageCount.set(sessionKey, totalCount);
+            log('[agent.end]', 'Session saved successfully, cursor updated to:', totalCount);
         } catch (err) {
             log('[agent.end]', 'Failed to save:', err);
         }

@@ -33,8 +33,11 @@ const SECRET_PATTERNS: [RegExp, string][] = [
 ];
 
 export function stripPrivateContent(content: string): string {
-    // First strip explicit <private> tags
-    let result = content.replace(/<private>[\s\S]*?<\/private>/gi, '[REDACTED]');
+    // Strip injected supermemory context so we don't save our own context back
+    let result = content.replace(/<supermemory-context>[\s\S]*?<\/supermemory-context>/gi, '');
+
+    // Strip explicit <private> tags
+    result = result.replace(/<private>[\s\S]*?<\/private>/gi, '[REDACTED]');
 
     // Then auto-detect common secrets
     for (const [pattern, replacement] of SECRET_PATTERNS) {

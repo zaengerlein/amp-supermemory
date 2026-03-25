@@ -96,9 +96,10 @@ export function formatProfileResults(profile: ProfileResult): string {
     return sections.join('\n\n');
 }
 
-export function formatListResults(memories: MemoryResult[]): string {
+export function formatListResults(memories: MemoryResult[], scope?: string): string {
+    const label = scope ? `${scope} memories` : 'memories';
     if (memories.length === 0) {
-        return 'No memories stored yet.';
+        return `No ${label} stored yet.`;
     }
 
     const lines = memories.map((m, i) => {
@@ -108,7 +109,7 @@ export function formatListResults(memories: MemoryResult[]): string {
         return `${i + 1}.${type} ${m.content.slice(0, 400)}${age}${id}`;
     });
 
-    return `Stored memories (${memories.length}):\n\n${lines.join('\n\n')}`;
+    return `Stored ${label} (${memories.length}):\n\n${lines.join('\n\n')}`;
 }
 
 function relativeTime(dateStr: string): string {

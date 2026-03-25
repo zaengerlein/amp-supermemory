@@ -2041,7 +2041,8 @@ var SECRET_PATTERNS = [
   [/\beyJ[a-zA-Z0-9_-]{10,}\.eyJ[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}\b/g, "[REDACTED_JWT]"]
 ];
 function stripPrivateContent(content) {
-  let result = content.replace(/<private>[\s\S]*?<\/private>/gi, "[REDACTED]");
+  let result = content.replace(/<supermemory-context>[\s\S]*?<\/supermemory-context>/gi, "");
+  result = result.replace(/<private>[\s\S]*?<\/private>/gi, "[REDACTED]");
   for (const [pattern, replacement] of SECRET_PATTERNS) {
     result = result.replace(pattern, replacement);
   }
@@ -2185,7 +2186,7 @@ function supermemoryPlugin(amp) {
   const config = loadConfig();
   let client = null;
   let tags = null;
-  const injectedSessions = /* @__PURE__ */ new Set();
+  const lastSavedMessageCount = /* @__PURE__ */ new Map();
   function ensureClient() {
     if (client) return client;
     const apiKey = getApiKey(config);
@@ -2253,7 +2254,9 @@ function supermemoryPlugin(amp) {
     }
   });
   amp.on("agent.end", async (event, ctx) => {
-    log("[agent.end]", "status:", event.status, "messageCount:", event.messages?.length ?? 0);
+    const allMessages = event.messages || [];
+    const totalCount = allMessages.length;
+    log("[agent.end]", "status:", event.status, "messageCount:", totalCount, "eventId:", event.id);
     const c = ensureClient();
     if (!c || event.status !== "done") {
       log("[agent.end]", "Skipping \u2014 client:", !!c, "status:", event.status);
@@ -2269,23 +2272,37 @@ function supermemoryPlugin(amp) {
       tags = generateTags(cwd, config);
       log("[agent.end]", "Initialized tags:", tags);
     }
-    const conversation = (event.messages || []).filter((m) => m.role === "user" || m.role === "assistant").map((m) => {
+    const sessionKey = tags.project;
+    const lastSaved = lastSavedMessageCount.get(sessionKey) ?? 0;
+    if (lastSaved >= totalCount) {
+      log("[agent.end]", "No new messages since last save, skipping. lastSaved:", lastSaved, "total:", totalCount);
+      return;
+    }
+    const newMessages = allMessages.slice(lastSaved);
+    log("[agent.end]", "Processing delta:", { lastSaved, total: totalCount, newCount: newMessages.length });
+    const conversation = newMessages.filter((m) => m.role === "user" || m.role === "assistant").map((m) => {
       const text = m.content.filter((b) => b.type === "text").map((b) => b.text).join("\n");
       return `${m.role}: ${text}`;
     }).filter((line) => line.length > 10).join("\n");
-    if (conversation.length < 50) {
+    if (conversation.length < 100) {
       log("[agent.end]", "Conversation too short, skipping:", conversation.length, "chars");
       return;
     }
     const sanitized = stripPrivateContent(conversation);
+    if (sanitized.trim().length < 100) {
+      log("[agent.end]", "Sanitized content too short after stripping, skipping:", sanitized.trim().length, "chars");
+      return;
+    }
     try {
       log("[agent.end]", "Saving to project scope:", {
         containerTag: tags.project,
         length: sanitized.length,
+        delta: `messages ${lastSaved}-${totalCount}`,
         preview: sanitized.slice(0, 300)
       });
       await c.addContent(sanitized, tags.project, { type: "session", source: "amp" });
-      log("[agent.end]", "Session saved successfully");
+      lastSavedMessageCount.set(sessionKey, totalCount);
+      log("[agent.end]", "Session saved successfully, cursor updated to:", totalCount);
     } catch (err) {
       log("[agent.end]", "Failed to save:", err);
     }
