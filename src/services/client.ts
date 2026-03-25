@@ -71,6 +71,7 @@ export class SupermemoryClient {
     async listMemories(containerTag: string, limit = 10): Promise<MemoryResult[]> {
         const result = (await Promise.race([
             this.client.search.memories({
+                q: '*',
                 containerTags: [containerTag],
                 limit,
             }),
