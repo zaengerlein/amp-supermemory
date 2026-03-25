@@ -4,9 +4,11 @@ Persistent memory plugin for [Amp](https://ampcode.com) using [Supermemory](http
 
 Your agent remembers what you worked on — across sessions, across projects.
 
-## Installation
+## Install
 
-1. Copy the plugin to your Amp plugins directory:
+> **Note:** The Amp plugin API is experimental. Installation is manual for now.
+
+**Step 1:** Copy the plugin to your Amp plugins directory:
 
 ```bash
 # Global (all projects)
@@ -20,23 +22,21 @@ curl -o .amp/plugins/supermemory.js \
   https://raw.githubusercontent.com/zaengerlein/amp-supermemory/main/dist/supermemory.js
 ```
 
-2. Run Amp with plugins enabled:
+**Step 2:** Run Amp with plugins enabled:
 
 ```bash
 PLUGINS=all amp
 ```
 
-3. Get your API key from [app.supermemory.ai](https://app.supermemory.ai/?view=integrations) and either:
+**Step 3:** Get your API key from [app.supermemory.ai](https://app.supermemory.ai/?view=integrations) and either:
 
 ```bash
 export SUPERMEMORY_API_KEY="sm_..."
 ```
 
-Or use the built-in login — press `Ctrl-O` and select **Supermemory: Login** to authenticate via browser.
+Or use the built-in login — press `Ctrl+O` and select **Supermemory: Login** to authenticate via browser.
 
 ## How It Works
-
-Once installed, the plugin works automatically:
 
 **Auto-Recall** — On the first message of each session, Supermemory fetches your user profile, relevant memories, and project knowledge, then injects them into the conversation context. No action needed.
 
@@ -78,7 +78,7 @@ The agent uses this tool proactively when you ask it to remember something, when
 
 ## Commands
 
-Press `Ctrl-O` to access:
+Press `Ctrl+O` to access:
 
 | Command | Description |
 |---------|-------------|
