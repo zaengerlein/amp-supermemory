@@ -132,7 +132,14 @@ export default function supermemoryPlugin(amp: PluginAPI) {
 
         // Only process messages since the last save (delta tracking)
         const sessionKey = tags.project;
-        const lastSaved = lastSavedMessageCount.get(sessionKey) ?? 0;
+        let lastSaved = lastSavedMessageCount.get(sessionKey) ?? 0;
+
+        // Reset cursor if message count dropped (new session or message array reset)
+        if (lastSaved > totalCount) {
+            log('[agent.end]', 'Message count dropped, resetting cursor. lastSaved:', lastSaved, 'total:', totalCount);
+            lastSaved = 0;
+            lastSavedMessageCount.set(sessionKey, 0);
+        }
 
         if (lastSaved >= totalCount) {
             log('[agent.end]', 'No new messages since last save, skipping. lastSaved:', lastSaved, 'total:', totalCount);
